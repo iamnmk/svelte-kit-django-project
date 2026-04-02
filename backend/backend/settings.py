@@ -24,9 +24,23 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-gz$8ivycs4!^d+_*k+hhsn&1=z@@#oc-h&5!@hyzn112!_k2ga'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get("DJANGO_DEBUG", "false").lower() == "true"
 
-ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "*").split(",")
+# Coolify/Django health checks commonly use localhost.
+# Keep localhost defaults and allow override/addition via env.
+_default_allowed_hosts = "localhost,127.0.0.1"
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", _default_allowed_hosts).split(",")
+    if host.strip()
+]
+
+# For admin/csrf-protected endpoints behind proxy/domain.
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",")
+    if origin.strip()
+]
 
 # This demo API uses a mix of frontend URLs and reverse-proxies.
 # Disable Django's automatic redirect (APPEND_SLASH) because it breaks POST/PUT
