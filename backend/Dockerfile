@@ -14,5 +14,7 @@ ENV NOTES_DATA_FILE=/data/notes.json
 
 EXPOSE 8000
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "backend.wsgi:application"]
+WORKDIR /app/backend
+
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "backend.wsgi:application"]
 
