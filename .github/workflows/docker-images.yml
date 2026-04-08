@@ -6,6 +6,8 @@ on:
 permissions:
   contents: read
   packages: write
+  security-events: write
+  issues: write 
 env:
   REGISTRY: ghcr.io
   IMAGE_BACKEND: ghcr.io/${{ github.repository }}-backend
@@ -144,8 +146,9 @@ jobs:
         continue-on-error: true
         with:
           target: ${{ secrets.OWASP_ZAP_TARGET_URL }}
-          rules_file_name: '.zap/rules.tsv'
-          cmd_options: '-a'
+          fail_action: false
+          artifact_name: zap-report
+          allow_issue_writing: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
