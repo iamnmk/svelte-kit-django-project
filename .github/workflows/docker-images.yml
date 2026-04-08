@@ -108,29 +108,46 @@ jobs:
           category: 'trivy-frontend'
 
       # ============ DEPENDENCY-CHECK SCANS ============
-      - name: Run OWASP Dependency-Check on backend
-        uses: jeremylong/DependencyCheck-Action@main
+      - name: Setup Java for Dependency-Check
+        uses: actions/setup-java@v4
         continue-on-error: true
         with:
-          project: 'Backend'
-          path: '.'
-          format: 'All'
-          args: >
-            --enableExperimental
-            --scan ./backend
-            --out ./reports/backend
+          java-version: '17'
+          distribution: 'temurin'
 
-      - name: Run OWASP Dependency-Check on frontend
-        uses: jeremylong/DependencyCheck-Action@main
+      - name: Download and run Dependency-Check on backend
         continue-on-error: true
-        with:
-          project: 'Frontend'
-          path: '.'
-          format: 'All'
-          args: >
-            --enableExperimental
-            --scan ./frontend
-            --out ./reports/frontend
+        run: |
+          mkdir -p reports
+          
+          # Download Dependency-Check
+          DC_VERSION="9.0.10"
+          DC_URL="https://github.com/jeremylong/DependencyCheck_Action/releases/download/v${DC_VERSION}/dependency-check-${DC_VERSION}-release.zip"
+          
+          echo "Downloading Dependency-Check v${DC_VERSION}..."
+          wget -q "$DC_URL" -O dependency-check.zip
+          unzip -q dependency-check.zip
+          
+          # Run scan on backend
+          echo "Scanning backend directory..."
+          dependency-check/bin/dependency-check.sh \
+            --project "Backend" \
+            --scan ./backend \
+            --out ./reports/backend \
+            --format All \
+            --enableExperimental || true
+
+      - name: Download and run Dependency-Check on frontend
+        continue-on-error: true
+        run: |
+          # Run scan on frontend (dependency-check already downloaded)
+          echo "Scanning frontend directory..."
+          dependency-check/bin/dependency-check.sh \
+            --project "Frontend" \
+            --scan ./frontend \
+            --out ./reports/frontend \
+            --format All \
+            --enableExperimental || true
 
       # ============ COLLECT AND UPLOAD DEPENDENCY-CHECK REPORTS ============
       - name: Collect Dependency-Check reports
