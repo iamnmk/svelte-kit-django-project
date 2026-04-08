@@ -109,7 +109,7 @@ jobs:
 
       # ============ DEPENDENCY-CHECK SCANS ============
       - name: Run OWASP Dependency-Check on backend
-        uses: jeremylong/DependencyCheck_Action@main
+        uses: jeremylong/DependencyCheck-Action@main
         continue-on-error: true
         with:
           project: 'Backend'
@@ -121,7 +121,7 @@ jobs:
             --out ./reports/backend
 
       - name: Run OWASP Dependency-Check on frontend
-        uses: jeremylong/DependencyCheck_Action@main
+        uses: jeremylong/DependencyCheck-Action@main
         continue-on-error: true
         with:
           project: 'Frontend'
