@@ -15,6 +15,8 @@ permissions:
 jobs:
   build-scan:
     runs-on: ubuntu-latest
+    env:
+      OWASP_ZAP_TARGET_URL: ${{ secrets.OWASP_ZAP_TARGET_URL }}
 
     steps:
       - name: Checkout repository
@@ -154,17 +156,17 @@ jobs:
         if: always()
         run: |
           mkdir -p zap-status
-          if [ -z "${{ secrets.OWASP_ZAP_TARGET_URL }}" ]; then
+          if [ -z "$OWASP_ZAP_TARGET_URL" ]; then
             echo "OWASP_ZAP_TARGET_URL secret is not set." > zap-status/zap-skipped.txt
           fi
 
       - name: Wait for deployment target to be reachable
-        if: always() && secrets.OWASP_ZAP_TARGET_URL != ''
+        if: always() && env.OWASP_ZAP_TARGET_URL != ''
         continue-on-error: true
         run: |
           echo "Waiting for deployment target..."
           for i in {1..18}; do
-            STATUS=$(curl -k -s -o /dev/null -w "%{http_code}" "${{ secrets.OWASP_ZAP_TARGET_URL }}")
+            STATUS=$(curl -k -s -o /dev/null -w "%{http_code}" "$OWASP_ZAP_TARGET_URL")
             if [ "$STATUS" = "200" ] || [ "$STATUS" = "301" ] || [ "$STATUS" = "302" ] || [ "$STATUS" = "401" ] || [ "$STATUS" = "403" ]; then
               echo "Target is reachable."
               exit 0
@@ -175,11 +177,11 @@ jobs:
           echo "Target did not become reachable in time, continuing anyway..."
 
       - name: OWASP ZAP Baseline Scan
-        if: always() && secrets.OWASP_ZAP_TARGET_URL != ''
+        if: always() && env.OWASP_ZAP_TARGET_URL != ''
         uses: zaproxy/action-baseline@v0.14.0
         continue-on-error: true
         with:
-          target: "${{ secrets.OWASP_ZAP_TARGET_URL }}"
+          target: "${{ env.OWASP_ZAP_TARGET_URL }}"
           fail_action: false
           artifact_name: zap-report
           allow_issue_writing: false
@@ -217,8 +219,11 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## ZAP" >> $GITHUB_STEP_SUMMARY
           if [ -f zap-status/zap-skipped.txt ]; then
-            echo "- ZAP skipped because secret was not configured" >> $GITHUB_STEP_SUMMARY
+            echo "- ZAP skipped because OWASP_ZAP_TARGET_URL was not configured" >> $GITHUB_STEP_SUMMARY
+          elif [ -n "$OWASP_ZAP_TARGET_URL" ]; then
+            echo "- ZAP baseline was triggered against the external target URL" >> $GITHUB_STEP_SUMMARY
           else
-            echo "- ZAP baseline was triggered against external target URL" >> $GITHUB_STEP_SUMMARY
+            echo "- ZAP status unknown" >> $GITHUB_STEP_SUMMARY
+          fi
           fi
 
