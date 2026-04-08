@@ -25,31 +25,30 @@ jobs:
       # =========================
       # OWASP Dependency Check
       # =========================
-      - name: Run Dependency Check on backend
-        uses: dependency-check/Dependency-Check_Action@main
-        continue-on-error: true
-        with:
-          project: "${{ github.repository }}-backend"
-          path: "./backend"
-          format: "ALL"
-          out: "reports/backend"
-
       - name: Run Dependency Check on frontend
         uses: dependency-check/Dependency-Check_Action@main
         continue-on-error: true
         with:
-          project: "${{ github.repository }}-frontend"
+          project: "frontend"
           path: "./frontend"
-          format: "ALL"
+          format: "HTML"
           out: "reports/frontend"
+          args: >
+            --enableRetired
+            --exclude "**/.svelte-kit/**"
+            --exclude "**/node_modules/**"
 
-      - name: Ensure dependency-check artifact exists
-        if: always()
-        run: |
-          mkdir -p reports
-          if ! find reports -type f | grep -q .; then
-            echo "No Dependency-Check reports were generated." > reports/README.txt
-          fi
+      - name: Run Dependency Check on backend
+        uses: dependency-check/Dependency-Check_Action@main
+        continue-on-error: true
+        with:
+          project: "backend"
+          path: "./backend"
+          format: "HTML"
+          out: "reports/backend"
+          args: >
+            --enableRetired
+            --enableExperimental
 
       - name: Upload Dependency Check reports
         if: always()
@@ -101,7 +100,7 @@ jobs:
             ${{ env.IMAGE_FRONTEND }}:${{ github.sha }}
 
       # =========================
-      # Trivy scans
+      # Trivy scans (Security tab only)
       # =========================
       - name: Run Trivy scan on backend image
         uses: aquasecurity/trivy-action@0.35.0
@@ -125,59 +124,40 @@ jobs:
           severity: CRITICAL,HIGH,MEDIUM
           exit-code: '0'
 
-      - name: Upload backend Trivy SARIF
+      - name: Upload backend Trivy SARIF to Security tab
         if: always() && hashFiles('trivy-backend-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-backend-results.sarif
           category: trivy-backend
 
-      - name: Upload frontend Trivy SARIF
+      - name: Upload frontend Trivy SARIF to Security tab
         if: always() && hashFiles('trivy-frontend-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-frontend-results.sarif
           category: trivy-frontend
 
-      - name: Upload Trivy reports as artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-reports
-          path: |
-            trivy-backend-results.sarif
-            trivy-frontend-results.sarif
-          if-no-files-found: warn
-
       # =========================
-      # OWASP ZAP on external target
+      # OWASP ZAP
       # =========================
-      - name: Check whether ZAP target is configured
-        if: always()
-        run: |
-          mkdir -p zap-status
-          if [ -z "$OWASP_ZAP_TARGET_URL" ]; then
-            echo "OWASP_ZAP_TARGET_URL secret is not set." > zap-status/zap-skipped.txt
-          fi
-
       - name: Wait for deployment target to be reachable
-        if: always() && env.OWASP_ZAP_TARGET_URL != ''
+        if: env.OWASP_ZAP_TARGET_URL != ''
         continue-on-error: true
         run: |
-          echo "Waiting for deployment target..."
           for i in {1..18}; do
             STATUS=$(curl -k -s -o /dev/null -w "%{http_code}" "$OWASP_ZAP_TARGET_URL")
             if [ "$STATUS" = "200" ] || [ "$STATUS" = "301" ] || [ "$STATUS" = "302" ] || [ "$STATUS" = "401" ] || [ "$STATUS" = "403" ]; then
-              echo "Target is reachable."
+              echo "Target is reachable (HTTP $STATUS)"
               exit 0
             fi
             echo "Attempt $i: got $STATUS, retrying in 10s..."
             sleep 10
           done
-          echo "Target did not become reachable in time, continuing anyway..."
+          echo "Target not reachable in time, continuing anyway..."
 
       - name: OWASP ZAP Baseline Scan
-        if: always() && env.OWASP_ZAP_TARGET_URL != ''
+        if: env.OWASP_ZAP_TARGET_URL != ''
         uses: zaproxy/action-baseline@v0.14.0
         continue-on-error: true
         with:
@@ -185,45 +165,5 @@ jobs:
           fail_action: false
           artifact_name: zap-report
           allow_issue_writing: false
-
-      - name: Upload ZAP status artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: zap-status
-          path: zap-status/
-          if-no-files-found: warn
-
-      # =========================
-      # Summary
-      # =========================
-      - name: Write workflow summary
-        if: always()
-        run: |
-          echo "# Security Scan Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Dependency-Check" >> $GITHUB_STEP_SUMMARY
-          if find reports -type f 2>/dev/null | grep -q .; then
-            echo "- Dependency-Check reports generated" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "- No Dependency-Check reports found" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Trivy" >> $GITHUB_STEP_SUMMARY
-          if [ -f trivy-backend-results.sarif ]; then
-            echo "- Backend image scanned" >> $GITHUB_STEP_SUMMARY
-          fi
-          if [ -f trivy-frontend-results.sarif ]; then
-            echo "- Frontend image scanned" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## ZAP" >> $GITHUB_STEP_SUMMARY
-          if [ -f zap-status/zap-skipped.txt ]; then
-            echo "- ZAP skipped because OWASP_ZAP_TARGET_URL was not configured" >> $GITHUB_STEP_SUMMARY
-          elif [ -n "$OWASP_ZAP_TARGET_URL" ]; then
-            echo "- ZAP baseline was triggered against the external target URL" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "- ZAP status unknown" >> $GITHUB_STEP_SUMMARY
-          fi
           fi
 
