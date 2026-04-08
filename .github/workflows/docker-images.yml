@@ -68,7 +68,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Trivy scan - Backend image
+      # ============ TRIVY SCANS ============
       - name: Run Trivy vulnerability scan on backend image
         uses: aquasecurity/trivy-action@master
         continue-on-error: true
@@ -81,7 +81,6 @@ jobs:
           REGISTRY_USERNAME: ${{ github.actor }}
           REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
 
-      # Trivy scan - Frontend image
       - name: Run Trivy vulnerability scan on frontend image
         uses: aquasecurity/trivy-action@master
         continue-on-error: true
@@ -94,7 +93,6 @@ jobs:
           REGISTRY_USERNAME: ${{ github.actor }}
           REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
 
-      # Upload Trivy results to GitHub Security tab
       - name: Upload Trivy backend results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
         continue-on-error: true
@@ -109,73 +107,137 @@ jobs:
           sarif_file: 'trivy-frontend-results.sarif'
           category: 'trivy-frontend'
 
-      # OWASP Dependency Check - Backend
-      - name: Run OWASP Dependency Check on backend
-        uses: dependency-check/Dependency-Check_Action@main
+      # ============ DEPENDENCY-CHECK SCANS ============
+      - name: Run OWASP Dependency-Check on backend
+        uses: jeremylong/DependencyCheck_Action@main
         continue-on-error: true
         with:
-          path: './backend'
+          project: 'Backend'
+          path: '.'
           format: 'All'
           args: >
-            --enable-experimental
+            --enableExperimental
             --scan ./backend
-      
-      # OWASP Dependency Check - Frontend
-      - name: Run OWASP Dependency Check on frontend
-        uses: dependency-check/Dependency-Check_Action@main
+            --out ./reports/backend
+
+      - name: Run OWASP Dependency-Check on frontend
+        uses: jeremylong/DependencyCheck_Action@main
         continue-on-error: true
         with:
-          path: './frontend'
+          project: 'Frontend'
+          path: '.'
           format: 'All'
           args: >
-            --enable-experimental
+            --enableExperimental
             --scan ./frontend
+            --out ./reports/frontend
 
-      # Upload Dependency Check reports as artifacts
-      - name: Upload Dependency Check reports
+      # ============ COLLECT AND UPLOAD DEPENDENCY-CHECK REPORTS ============
+      - name: Collect Dependency-Check reports
+        if: always()
+        run: |
+          mkdir -p final-reports
+          if [ -d "reports" ]; then
+            echo "Found reports directory, copying contents..."
+            cp -r reports/* final-reports/ 2>/dev/null || true
+          fi
+          echo "=== Final Reports Directory ===" 
+          find final-reports -type f -name "*" 2>/dev/null | head -20 || echo "No files found"
+
+      - name: Upload Dependency-Check reports to artifacts
         uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
           name: dependency-check-reports
-          path: reports/
+          path: final-reports/
           retention-days: 30
+          if-no-files-found: warn
 
-      # OWASP ZAP baseline scan
-      - name: Run OWASP ZAP baseline scan
-        uses: zaproxy/action-baseline@v0.8.0
+      # ============ OWASP ZAP SCAN ============
+      - name: Run OWASP ZAP scan
         continue-on-error: true
-        with:
-          target: ${{ secrets.OWASP_ZAP_TARGET_URL }}
-          fail_action: false
-          artifact_name: zap-report
-          allow_issue_writing: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p zap-reports
+          
+          # Check if OWASP_ZAP_TARGET_URL is set
+          if [ -z "${{ secrets.OWASP_ZAP_TARGET_URL }}" ]; then
+            echo "⚠️  OWASP_ZAP_TARGET_URL secret not set. Skipping ZAP scan."
+            echo "To enable ZAP scanning, add OWASP_ZAP_TARGET_URL to repository secrets."
+            touch zap-reports/zap-skipped.txt
+          else
+            echo "Starting OWASP ZAP scan on ${{ secrets.OWASP_ZAP_TARGET_URL }}..."
+            
+            # Pull ZAP Docker image
+            docker pull ghcr.io/zaproxy/zaproxy:latest || docker pull owasp/zap2docker-stable || true
+            
+            # Run ZAP baseline scan
+            docker run --rm \
+              -v ${{ github.workspace }}/zap-reports:/zap/report:rw \
+              ghcr.io/zaproxy/zaproxy:latest \
+              zap-baseline.py \
+              -t "${{ secrets.OWASP_ZAP_TARGET_URL }}" \
+              -r /zap/report/zap-report.html \
+              -J /zap/report/zap-report.json || true
+            
+            # Create a summary if scan ran
+            if [ -f "zap-reports/zap-report.html" ]; then
+              echo "✅ ZAP scan completed successfully"
+            else
+              echo "⚠️  ZAP scan did not produce results. Target may be unreachable."
+              echo "Target: ${{ secrets.OWASP_ZAP_TARGET_URL }}" > zap-reports/zap-scan-info.txt
+            fi
+          fi
 
-      # Upload ZAP reports as artifacts
-      - name: Upload ZAP scan report
+      - name: Upload ZAP reports to artifacts
         uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
-          name: owasp-zap-report
-          path: report_md.md
+          name: owasp-zap-reports
+          path: zap-reports/
           retention-days: 30
+          if-no-files-found: warn
 
-      # Create a summary report
+      # ============ SUMMARY ============
       - name: Create security scan summary
         if: always()
         run: |
-          echo "# Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "# 🔒 Security Scan Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Scan Results" >> $GITHUB_STEP_SUMMARY
-          echo "- **Trivy Backend**: Completed" >> $GITHUB_STEP_SUMMARY
-          echo "- **Trivy Frontend**: Completed" >> $GITHUB_STEP_SUMMARY
-          echo "- **OWASP Dependency Check Backend**: Completed" >> $GITHUB_STEP_SUMMARY
-          echo "- **OWASP Dependency Check Frontend**: Completed" >> $GITHUB_STEP_SUMMARY
-          echo "- **OWASP ZAP Scan**: Completed" >> $GITHUB_STEP_SUMMARY
+          echo "## ✅ Completed Scans" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Artifacts" >> $GITHUB_STEP_SUMMARY
-          echo "- Dependency Check reports available in Actions artifacts" >> $GITHUB_STEP_SUMMARY
-          echo "- OWASP ZAP report available in Actions artifacts" >> $GITHUB_STEP_SUMMARY
-          echo "- Trivy results uploaded to GitHub Security tab" >> $GITHUB_STEP_SUMMARY
+          echo "### Trivy Vulnerability Scan" >> $GITHUB_STEP_SUMMARY
+          if [ -f "trivy-backend-results.sarif" ]; then
+            echo "- ✅ Backend image scanned" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ -f "trivy-frontend-results.sarif" ]; then
+            echo "- ✅ Frontend image scanned" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### OWASP Dependency-Check" >> $GITHUB_STEP_SUMMARY
+          if [ -d "final-reports" ] && [ "$(ls -A final-reports)" ]; then
+            echo "- ✅ Dependency-Check completed" >> $GITHUB_STEP_SUMMARY
+            echo "  - Reports available in artifacts: **dependency-check-reports**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ⚠️  No Dependency-Check reports generated" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### OWASP ZAP Scan" >> $GITHUB_STEP_SUMMARY
+          if [ -f "zap-reports/zap-skipped.txt" ]; then
+            echo "- ⏭️  Skipped - OWASP_ZAP_TARGET_URL not configured" >> $GITHUB_STEP_SUMMARY
+          elif [ -f "zap-reports/zap-report.html" ]; then
+            echo "- ✅ ZAP scan completed" >> $GITHUB_STEP_SUMMARY
+            echo "  - Reports available in artifacts: **owasp-zap-reports**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ⚠️  ZAP scan skipped or target unreachable" >> $GITHUB_STEP_SUMMARY
+            echo "  - Check logs for details" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 📦 Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "All reports are available in the Actions artifacts section:" >> $GITHUB_STEP_SUMMARY
+          echo "- **trivy-backend-results.sarif** - Uploaded to Security tab" >> $GITHUB_STEP_SUMMARY
+          echo "- **trivy-frontend-results.sarif** - Uploaded to Security tab" >> $GITHUB_STEP_SUMMARY
+          echo "- **dependency-check-reports** - HTML, JSON, XML, CSV reports" >> $GITHUB_STEP_SUMMARY
+          echo "- **owasp-zap-reports** - HTML and JSON reports" >> $GITHUB_STEP_SUMMARY
 
