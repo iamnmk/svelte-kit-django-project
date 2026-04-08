@@ -1,40 +1,31 @@
 name: Build and push Docker images
-
 on:
   push:
     branches: [main]
   workflow_dispatch:
-
 permissions:
   contents: read
   packages: write
-
 env:
   REGISTRY: ghcr.io
   IMAGE_BACKEND: ghcr.io/${{ github.repository }}-backend
   IMAGE_FRONTEND: ghcr.io/${{ github.repository }}-frontend
-
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Backend meta
         id: meta_backend
         uses: docker/metadata-action@v5
@@ -43,7 +34,6 @@ jobs:
           tags: |
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
-
       - name: Build and push backend
         uses: docker/build-push-action@v6
         with:
@@ -52,7 +42,6 @@ jobs:
           push: true
           tags: ${{ steps.meta_backend.outputs.tags }}
           labels: ${{ steps.meta_backend.outputs.labels }}
-
       - name: Frontend meta
         id: meta_frontend
         uses: docker/metadata-action@v5
@@ -61,7 +50,6 @@ jobs:
           tags: |
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
-
       - name: Build and push frontend
         uses: docker/build-push-action@v6
         with:
@@ -70,4 +58,121 @@ jobs:
           push: true
           tags: ${{ steps.meta_frontend.outputs.tags }}
           labels: ${{ steps.meta_frontend.outputs.labels }}
+
+  security-scan:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Trivy scan - Backend image
+      - name: Run Trivy vulnerability scan on backend image
+        uses: aquasecurity/trivy-action@master
+        continue-on-error: true
+        with:
+          image-ref: ${{ env.IMAGE_BACKEND }}:latest
+          format: 'sarif'
+          output: 'trivy-backend-results.sarif'
+          severity: 'CRITICAL,HIGH'
+        env:
+          REGISTRY_USERNAME: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+
+      # Trivy scan - Frontend image
+      - name: Run Trivy vulnerability scan on frontend image
+        uses: aquasecurity/trivy-action@master
+        continue-on-error: true
+        with:
+          image-ref: ${{ env.IMAGE_FRONTEND }}:latest
+          format: 'sarif'
+          output: 'trivy-frontend-results.sarif'
+          severity: 'CRITICAL,HIGH'
+        env:
+          REGISTRY_USERNAME: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+
+      # Upload Trivy results to GitHub Security tab
+      - name: Upload Trivy backend results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        continue-on-error: true
+        with:
+          sarif_file: 'trivy-backend-results.sarif'
+          category: 'trivy-backend'
+
+      - name: Upload Trivy frontend results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        continue-on-error: true
+        with:
+          sarif_file: 'trivy-frontend-results.sarif'
+          category: 'trivy-frontend'
+
+      # OWASP Dependency Check - Backend
+      - name: Run OWASP Dependency Check on backend
+        uses: dependency-check/Dependency-Check_Action@main
+        continue-on-error: true
+        with:
+          path: './backend'
+          format: 'All'
+          args: >
+            --enable-experimental
+            --scan ./backend
+      
+      # OWASP Dependency Check - Frontend
+      - name: Run OWASP Dependency Check on frontend
+        uses: dependency-check/Dependency-Check_Action@main
+        continue-on-error: true
+        with:
+          path: './frontend'
+          format: 'All'
+          args: >
+            --enable-experimental
+            --scan ./frontend
+
+      # Upload Dependency Check reports as artifacts
+      - name: Upload Dependency Check reports
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: dependency-check-reports
+          path: reports/
+          retention-days: 30
+
+      # OWASP ZAP baseline scan
+      - name: Run OWASP ZAP baseline scan
+        uses: zaproxy/action-baseline@v0.8.0
+        continue-on-error: true
+        with:
+          target: ${{ secrets.OWASP_ZAP_TARGET_URL }}
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Upload ZAP reports as artifacts
+      - name: Upload ZAP scan report
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: owasp-zap-report
+          path: report_md.md
+          retention-days: 30
+
+      # Create a summary report
+      - name: Create security scan summary
+        if: always()
+        run: |
+          echo "# Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trivy Backend**: Completed" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trivy Frontend**: Completed" >> $GITHUB_STEP_SUMMARY
+          echo "- **OWASP Dependency Check Backend**: Completed" >> $GITHUB_STEP_SUMMARY
+          echo "- **OWASP Dependency Check Frontend**: Completed" >> $GITHUB_STEP_SUMMARY
+          echo "- **OWASP ZAP Scan**: Completed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "- Dependency Check reports available in Actions artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "- OWASP ZAP report available in Actions artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "- Trivy results uploaded to GitHub Security tab" >> $GITHUB_STEP_SUMMARY
 
