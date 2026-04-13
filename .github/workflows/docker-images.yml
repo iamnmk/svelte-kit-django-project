@@ -3,7 +3,7 @@ name: Build and Security Scan
 on:
   push:
     branches:
-      - main
+      - dev
   workflow_dispatch:
 
 permissions:
@@ -82,7 +82,7 @@ jobs:
       - name: Build and push backend image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ./backend
           file: ./backend/Dockerfile
           push: true
           tags: |
@@ -124,19 +124,15 @@ jobs:
           severity: CRITICAL,HIGH,MEDIUM
           exit-code: '0'
 
-      - name: Upload backend Trivy SARIF to Security tab
-        if: always() && hashFiles('trivy-backend-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v4
+      - name: Upload Trivy reports as artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          sarif_file: trivy-backend-results.sarif
-          category: trivy-backend
-
-      - name: Upload frontend Trivy SARIF to Security tab
-        if: always() && hashFiles('trivy-frontend-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: trivy-frontend-results.sarif
-          category: trivy-frontend
+          name: trivy-reports
+          path: |
+            trivy-backend-results.sarif
+            trivy-frontend-results.sarif
+          if-no-files-found: warn
 
       # =========================
       # OWASP ZAP
